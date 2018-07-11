@@ -33,7 +33,6 @@ def small():
 
 
 def test_basic(small):
-    coords, length = linearise_img(small)
+    geoms = linearise_img(small)
+    assert list(geoms) == [[[(1, 1), (2, 2), (3, 3)]]]
 
-    print(coords)
-    print(length)
