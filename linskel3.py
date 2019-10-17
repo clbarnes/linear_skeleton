@@ -29,65 +29,7 @@ neighbour_locs = np.array([
 ])
 
 
-def clean_im(bin_im: np.ndarray):
-    assert np.allclose(np.unique(bin_im), np.array([0, 1]).astype(bin_im.dtype))
-    return skeletonize(bin_im.astype(np.uint8)).astype(np.uint8)
-
-
-def im_to_graph(skeletonized: np.ndarray):
-    convolved = (
-            convolve(skeletonized, kernel, mode="constant", cval=0, origin=[0, 0]) * skeletonized
-    ).astype(np.uint8)
-    ys, xs = convolved.nonzero()  # n length
-
-    location_bits = int_reprs[convolved[ys, xs]]  # n by 8
-    diffs = neighbour_locs[location_bits]  # n by 8 by 2
-    g = nx.Graph()
-
-    for yx, this_diff in zip(zip(ys, xs), diffs):
-        nonself = this_diff[np.abs(this_diff).sum(axis=1) > 0]
-        partners = nonself + yx
-        for partner in partners:
-            g.add_edge(
-                yx, tuple(partner),
-                weight=np.linalg.norm(partner - yx)
-            )
-
-    return g
-
-
-def graph_to_paths(g: nx.Graph):
-    msf = nx.minimum_spanning_tree(g)
-    paths = dict(nx.all_pairs_shortest_path(msf))
-    for nodes in nx.connected_components(msf):
-        mst = msf.subgraph(nodes)
-        lines = []
-        src, *leaves = sorted(node for node, deg in mst.degree if deg == 1)
-        visited = set()
-
-        for leaf in leaves:
-            path = paths[src][leaf]
-            existing_path = []
-            new_path = []
-
-            for item in path:
-                if item in visited:
-                    existing_path.append(item)
-                else:
-                    new_path.append(item)
-
-            new_path = existing_path[-1:] + new_path
-            lines.append(new_path)
-            visited.update(new_path)
-
-        yield lines
-
-
-def graph_to_length(g: nx.Graph):
-    return sum(t[-1] for t in g.edges.data('weight'))
-
-
-def linearise_img(bin_im: np.ndarray):
+def linearise_img(bin_im):
     """
     Takes a binary image, skeletonises it, returns multilinestrings present in the image.
 
@@ -101,33 +43,65 @@ def linearise_img(bin_im: np.ndarray):
 
     i.e. to get the y coordinate of the first point in the first linestring of the first connected component, use
 
-    ``list(result)[0][0][0][0]``
+    ``result[0][0][0]``
 
     N.B. does not close rings
 
     :param bin_im:
     :return:
     """
-    skeletonized = clean_im(bin_im)
+    assert np.allclose(np.unique(bin_im), np.array([0, 1]).astype(bin_im.dtype))
+    skeletonized = skeletonize(bin_im.astype(np.uint8)).astype(np.uint8)
+    convolved = (
+            convolve(skeletonized, kernel, mode="constant", cval=0, origin=[0, 0]) * skeletonized
+    ).astype(np.uint8)
 
-    g = im_to_graph(skeletonized)
-    yield from graph_to_paths(g)
+    ys, xs = convolved.nonzero()  # n length
 
+    location_bits = int_reprs[convolved[ys, xs]]  # n by 8
+    diffs = neighbour_locs[location_bits]  # n by 8 by 2
 
-def length_img(bin_im):
-    skeletonized = clean_im(bin_im)
-    g = im_to_graph(skeletonized)
-    return graph_to_length(g)
+    g = nx.Graph()
+    for yx, this_diff in zip(zip(ys, xs), diffs):
+        nonself = this_diff[np.abs(this_diff).sum(axis=1) > 0]
+        partners = nonself + yx
+        for partner in partners:
+            g.add_edge(
+                yx, tuple(partner),
+                weight=np.linalg.norm(partner - yx)
+            )
+
+    msf = nx.minimum_spanning_tree(g)
+    paths = dict(nx.all_pairs_shortest_path(msf))
+    for nodes in nx.connected_components(msf):
+        mst = msf.subgraph(nodes)
+        lines = []
+        src, *leaves = sorted(node for node, deg in mst.degree if deg == 1)
+        visited = set()
+
+        for leaf in leaves:
+            path = paths[src][leaf]
+            existing_path = []
+            new_path = []
+            
+            for item in path:
+                if item in visited:
+                    existing_path.append(item)
+                else:
+                    new_path.append(item)
+
+            new_path = existing_path[-1:] + new_path
+            lines.append(new_path)
+            visited.update(new_path)
+
+        yield lines
 
 
 if __name__ == '__main__':
     import imageio
     from timeit import timeit
-    im = imageio.imread("img/complicated.png", pilmode='L') // 255
-    n = 5
-    # time = timeit("list(linearise_img(im))", number=n, globals=globals()) / n
-    # coords = list(linearise_img(im))
-    # print(time)
-    time = timeit("length_img(im)", number=n, globals=globals()) / n
-    print(f"{time}s per iteration")
-    # print(f"{}px per iteration")
+    im = imageio.imread("img/two_lines.png", pilmode='L') // 255
+    n = 50
+    time = timeit("list(linearise_img(im))", number=n, globals=globals()) / n
+    coords = list(linearise_img(im))
+    print(time)

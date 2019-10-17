@@ -1,7 +1,10 @@
+from collections import deque
+
 import networkx as nx
 from skimage.morphology import skeletonize
 import numpy as np
 from scipy.ndimage.filters import convolve
+from scipy.ndimage import gaussian_filter1d
 
 
 kernel = 2 ** np.array([
@@ -56,35 +59,9 @@ def im_to_graph(skeletonized: np.ndarray):
     return g
 
 
-def graph_to_paths(g: nx.Graph):
-    msf = nx.minimum_spanning_tree(g)
-    paths = dict(nx.all_pairs_shortest_path(msf))
-    for nodes in nx.connected_components(msf):
-        mst = msf.subgraph(nodes)
-        lines = []
-        src, *leaves = sorted(node for node, deg in mst.degree if deg == 1)
-        visited = set()
-
-        for leaf in leaves:
-            path = paths[src][leaf]
-            existing_path = []
-            new_path = []
-
-            for item in path:
-                if item in visited:
-                    existing_path.append(item)
-                else:
-                    new_path.append(item)
-
-            new_path = existing_path[-1:] + new_path
-            lines.append(new_path)
-            visited.update(new_path)
-
-        yield lines
-
-
-def graph_to_length(g: nx.Graph):
-    return sum(t[-1] for t in g.edges.data('weight'))
+def graph_to_path(g: nx.Graph):
+    start, end = [coord for coord, deg in g.degree if deg == 1]
+    return nx.shortest_path(g, start, end)
 
 
 def linearise_img(bin_im: np.ndarray):
@@ -111,19 +88,27 @@ def linearise_img(bin_im: np.ndarray):
     skeletonized = clean_im(bin_im)
 
     g = im_to_graph(skeletonized)
-    yield from graph_to_paths(g)
+    return graph_to_path(g)
+
+
+def coords_to_len(coords):
+    coords = np.asarray(coords, dtype=float)
+    norms = np.linalg.norm(np.diff(coords, axis=0), axis=1)
+    return sum(norms)
 
 
 def length_img(bin_im):
-    skeletonized = clean_im(bin_im)
-    g = im_to_graph(skeletonized)
-    return graph_to_length(g)
+    linestring = np.asarray(linearise_img(bin_im), dtype=float)
+    sigma = 3
+    smoothed = gaussian_filter1d(linestring, sigma, axis=0)
+    return coords_to_len(smoothed)
 
 
 if __name__ == '__main__':
     import imageio
+    from matplotlib import pyplot as plt
     from timeit import timeit
-    im = imageio.imread("img/complicated.png", pilmode='L') // 255
+    im = imageio.imread("img/spiral.png", pilmode='L') // 255
     n = 5
     # time = timeit("list(linearise_img(im))", number=n, globals=globals()) / n
     # coords = list(linearise_img(im))
@@ -131,3 +116,19 @@ if __name__ == '__main__':
     time = timeit("length_img(im)", number=n, globals=globals()) / n
     print(f"{time}s per iteration")
     # print(f"{}px per iteration")
+
+    linestring = np.asarray(linearise_img(im), dtype=float)
+    smoothed = gaussian_filter1d(linestring, 3, axis=0)
+
+    value = length_img(im)
+    approx_value = coords_to_len(linestring)
+
+    fig, ax = plt.subplots()
+    ax.imshow(im, origin="upper")
+    ax.plot(*linestring.T, c="r", label="raw")
+    ax.plot(*smoothed.T, c="b", label="smoothed")
+    ax.legend()
+    plt.show()
+
+    print(value)
+    print(approx_value)
